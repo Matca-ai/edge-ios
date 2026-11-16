@@ -1,0 +1,21 @@
+{
+ "classes": [
+  "bright",
+  "dark"
+ ],
+ "tolerance": 0.01,
+ "answers": {
+  "cap-upright.default.png": {
+   "label": "bright",
+   "confidence": 0.8644
+  },
+  "cap-second.default.png": {
+   "label": "bright",
+   "confidence": 0.5341
+  },
+  "cap-sideways.illumination.png": {
+   "label": "dark",
+   "confidence": 0.5533
+  }
+ }
+}
