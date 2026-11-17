@@ -25,7 +25,7 @@ final class ReportSendingTests: ClassifierTestCase {
         ])
         let request = try XCTUnwrap(FakeEdge.requests(endingWith: "/report").first)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mdk_1_secret")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "matca-edge-ios/1.0.1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "matca-edge-ios/1.1.0")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
         XCTAssertEqual(body["platform"] as? String, "ios")

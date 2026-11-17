@@ -63,7 +63,7 @@ enum PictureDecoding {
             return true
         }
         guard drawn else { throw EdgeError.undecodablePicture }
-        return stripped(rgbx, width: width, height: height, order: [0, 1, 2])
+        return try stripped(rgbx, width: width, height: height, order: .rgbx)
     }
 
     static func rgb(of pixelBuffer: CVPixelBuffer) throws -> RGBPicture {
@@ -73,11 +73,11 @@ enum PictureDecoding {
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
         case kCVPixelFormatType_32BGRA:
-            return stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: [2, 1, 0])
+            return try stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: .bgra)
         case kCVPixelFormatType_32ARGB:
-            return stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: [1, 2, 3])
+            return try stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: .argb)
         case kCVPixelFormatType_32RGBA:
-            return stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: [0, 1, 2])
+            return try stripped(packedBytes(pixelBuffer, bytesPerPixel: 4), width: width, height: height, order: .rgbx)
         case kCVPixelFormatType_24RGB:
             return RGBPicture(width: width, height: height, pixels: packedBytes(pixelBuffer, bytesPerPixel: 3))
         case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
@@ -114,7 +114,7 @@ enum PictureDecoding {
             ) == kvImageNoError
         }
         guard converted else { throw EdgeError.unsupportedPixelFormat }
-        return stripped(argb, width: width, height: height, order: [1, 2, 3])
+        return try stripped(argb, width: width, height: height, order: .argb)
     }
 
     private static func packedBytes(_ pixelBuffer: CVPixelBuffer, bytesPerPixel: Int) -> [UInt8] {
@@ -129,14 +129,27 @@ enum PictureDecoding {
         return packed
     }
 
-    /// Three channels out of four-byte pixels, `order` naming where red, green and blue sit.
-    private static func stripped(_ bytes: [UInt8], width: Int, height: Int, order: [Int]) -> RGBPicture {
+    /// Where red, green and blue sit in a four-byte pixel.
+    enum FourByteOrder {
+        case rgbx, bgra, argb
+    }
+
+    /// Three channels out of four-byte pixels, moved by vImage: the same bytes, at the same cost in any build.
+    private static func stripped(_ bytes: [UInt8], width: Int, height: Int, order: FourByteOrder) throws -> RGBPicture {
         var pixels = [UInt8](repeating: 0, count: width * height * 3)
-        for index in 0..<(width * height) {
-            pixels[index * 3] = bytes[index * 4 + order[0]]
-            pixels[index * 3 + 1] = bytes[index * 4 + order[1]]
-            pixels[index * 3 + 2] = bytes[index * 4 + order[2]]
+        var source = bytes
+        let converted = source.withUnsafeMutableBytes { from in
+            pixels.withUnsafeMutableBytes { to in
+                var sourceBuffer = vImage_Buffer(data: from.baseAddress, height: vImagePixelCount(height), width: vImagePixelCount(width), rowBytes: width * 4)
+                var targetBuffer = vImage_Buffer(data: to.baseAddress, height: vImagePixelCount(height), width: vImagePixelCount(width), rowBytes: width * 3)
+                switch order {
+                case .rgbx: return vImageConvert_RGBA8888toRGB888(&sourceBuffer, &targetBuffer, vImage_Flags(kvImageNoFlags))
+                case .bgra: return vImageConvert_BGRA8888toRGB888(&sourceBuffer, &targetBuffer, vImage_Flags(kvImageNoFlags))
+                case .argb: return vImageConvert_ARGB8888toRGB888(&sourceBuffer, &targetBuffer, vImage_Flags(kvImageNoFlags))
+                }
+            }
         }
+        guard converted == kvImageNoError else { throw EdgeError.undecodablePicture }
         return RGBPicture(width: width, height: height, pixels: pixels)
     }
 }

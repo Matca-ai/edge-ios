@@ -18,15 +18,25 @@ and new releases you make in the Matca console reach the app by themselves, with
 
 ## Requirements
 
-iOS 15 or macOS 12, Swift 5.9, Xcode 15 or newer. No third-party dependencies.
+iOS 15 or macOS 12, Xcode 26.5 or newer. No third-party dependencies.
+
+The package installs a prebuilt, optimised framework, so the picture steps run at full speed even in your app's Debug
+build. GitHub builds it from the source in `Sources/` and signs where it came from; to check a release:
+
+```sh
+gh attestation verify MatcaEdge.xcframework.zip --repo Matca-ai/edge-ios
+```
+
+Rather build from source? Use the `MatcaEdgeSource` product instead (`import MatcaEdgeSource`): the same code,
+compiled in your app.
 
 ## Install
 
 In Xcode: **File › Add Package Dependencies…**, enter `https://github.com/matca-ai/edge-ios` and pick version
-`1.0.1`. Or in `Package.swift`:
+`1.1.0`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/matca-ai/edge-ios.git", from: "1.0.1")
+.package(url: "https://github.com/matca-ai/edge-ios.git", from: "1.1.0")
 // and in your target's dependencies:
 .product(name: "MatcaEdge", package: "edge-ios")
 ```
@@ -89,6 +99,9 @@ for await state in watch.states(of: frames) {   // frames: AsyncStream<Frame>, e
 |---|---|---|
 | `frameInterval` | 0.25 s | Classifies at most one frame per interval |
 | `waitForStablePicture` | `false` | Waits for a steady, bright picture before the first answer (at most 4 s) |
+| `stablePictureFrames` | 12 | Steady frames in a row that settle the picture |
+| `stablePictureMinimumBrightness` | 130 | Brightness (0–255) a steady frame needs; `0` if a dark picture is itself an answer |
+| `stablePictureTimeout` | 4 s | How long the wait lasts at most before answering anyway, in seconds |
 | `detectBlackScreen` | `false` | Reports `.blackScreen` and stops when the picture goes black |
 | `ignoreFirstAnswers` | 4 | Skips the answers while the camera settles |
 | `confidenceGate` | 0.95 | Drops answers below it |

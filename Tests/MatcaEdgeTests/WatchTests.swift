@@ -102,6 +102,30 @@ final class WatchTests: XCTestCase {
         XCTAssertEqual(answers.classified, 20 - 14)
     }
 
+    func testADarkSteadyPictureSettlesWhenTheAppAllowsDarkness() async throws {
+        let answers = Answers(Array(repeating: ("A", 0.99), count: 20))
+        var watch = watch(answers)
+        watch.waitForStablePicture = true
+        watch.stablePictureMinimumBrightness = 0
+        _ = await collect(watch.states(of: greyFrames(50, count: 20, every: 0.3)))
+        XCTAssertEqual(answers.classified, 20 - 12, "as soon as a bright picture would, not after the timeout")
+    }
+
+    func testTheAppSetsTheWaitsTimeoutAndItsSteadyFrames() async throws {
+        let darkAnswers = Answers(Array(repeating: ("A", 0.99), count: 20))
+        var shortWait = watch(darkAnswers)
+        shortWait.waitForStablePicture = true
+        shortWait.stablePictureTimeout = 1
+        _ = await collect(shortWait.states(of: greyFrames(50, count: 20, every: 0.3)))
+        XCTAssertEqual(darkAnswers.classified, 20 - 4, "the frame at 1.2 s ends a 1 s wait")
+        let brightAnswers = Answers(Array(repeating: ("A", 0.99), count: 20))
+        var fewFrames = watch(brightAnswers)
+        fewFrames.waitForStablePicture = true
+        fewFrames.stablePictureFrames = 3
+        _ = await collect(fewFrames.states(of: greyFrames(200, count: 20, every: 0.3)))
+        XCTAssertEqual(brightAnswers.classified, 20 - 3)
+    }
+
     func testTheStabilityDetectorResetsOnAChangedFrame() {
         var detector = FrameStabilityDetector()
         let bright = FrameThumbnail(of: RGBPicture.grey(width: 64, height: 64, values: [UInt8](repeating: 200, count: 64 * 64)))

@@ -169,7 +169,7 @@ public actor Classifier {
         if let release = current?.release { return release }
         let waiter = UUID()
         return try await withCheckedThrowingContinuation { continuation in
-            Task { await self.wait(waiter, continuation, timeout: timeout) }
+            Task { self.wait(waiter, continuation, timeout: timeout) }
         }
     }
 

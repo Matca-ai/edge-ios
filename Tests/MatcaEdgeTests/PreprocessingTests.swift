@@ -178,4 +178,50 @@ final class PreprocessingTests: XCTestCase {
         }
         return Double(total) / Double(first.pixels.count)
     }
+
+    /// Every orientation against the rule of Pillow's `exif_transpose`, on a picture whose every pixel differs.
+    func testEachOrientationMovesEveryPixelWherePillowPutsIt() {
+        let width = 3, height = 2
+        var bytes: [UInt8] = []
+        for index in 0..<width * height {
+            let value = UInt8(index * 10)
+            bytes += [value, value + 1, value + 2]
+        }
+        let picture = RGBPicture(width: width, height: height, pixels: bytes)
+        let lastX = width - 1, lastY = height - 1
+        let sourceOf: [Int: (Int, Int) -> (Int, Int)] = [
+            2: { x, y in (lastX - x, y) }, 3: { x, y in (lastX - x, lastY - y) }, 4: { x, y in (x, lastY - y) },
+            5: { x, y in (y, x) }, 6: { x, y in (y, lastY - x) }, 7: { x, y in (lastX - y, lastY - x) }, 8: { x, y in (lastX - y, x) },
+        ]
+        for orientation in 2...8 {
+            let upright = fixOrientation(picture, exifOrientation: orientation)
+            let swapsAxes = orientation >= 5
+            XCTAssertEqual(upright.width, swapsAxes ? height : width, "orientation \(orientation)")
+            for y in 0..<upright.height {
+                for x in 0..<upright.width {
+                    let (sourceX, sourceY) = sourceOf[orientation]!(x, y)
+                    let expected = Array(picture.pixels[picture.offset(x: sourceX, y: sourceY)..<picture.offset(x: sourceX, y: sourceY) + 3])
+                    XCTAssertEqual(Array(upright.pixels[upright.offset(x: x, y: y)..<upright.offset(x: x, y: y) + 3]), expected, "orientation \(orientation) at \(x),\(y)")
+                }
+            }
+        }
+    }
+
+    /// The mask's runs against Pillow's rule for every pixel, on square, wide, tall, odd and even pictures.
+    func testTheCircleMaskBlanksExactlyThePixelsOutsideTheCircle() {
+        for (width, height) in [(1, 1), (2, 3), (5, 5), (6, 4), (7, 10), (64, 64), (101, 57)] {
+            let picture = RGBPicture(width: width, height: height, pixels: [UInt8](repeating: 200, count: width * height * 3))
+            let masked = circleMasked(picture)
+            let side = min(width, height)
+            let radius = Double(side - 1) / 2
+            let centreX = Double((width - side) / 2) + radius, centreY = Double((height - side) / 2) + radius
+            for y in 0..<height {
+                for x in 0..<width {
+                    let dx = Double(x) - centreX, dy = Double(y) - centreY
+                    let expected: UInt8 = dx * dx + dy * dy > radius * radius ? 0 : 200
+                    XCTAssertEqual(masked.pixels[masked.offset(x: x, y: y)], expected, "\(width)×\(height) at \(x),\(y)")
+                }
+            }
+        }
+    }
 }

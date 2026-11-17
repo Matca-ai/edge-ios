@@ -1,0 +1,53 @@
+# Builds a release's framework on GitHub from the source commit Matca's release script pushed to main, signs where it
+# came from (SLSA build provenance through GitHub's Sigstore: `gh attestation verify MatcaEdge.xcframework.zip --repo
+# Matca-ai/edge-ios`), and makes the release: one commit on top of the source commit that changes only Package.swift,
+# naming the zip by URL and checksum, and the zip on a draft release that is then published, so the tag appears only
+# once its file can be downloaded. Started by `gh workflow run release.yml -f version=<version>`.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release, as Sources/MatcaEdge/EdgeConfiguration.swift names it
+        required: true
+
+concurrency: { group: release, cancel-in-progress: false }
+permissions: {}
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The version is the code's
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "a version is like 1.2.3" >&2; exit 1; }
+          grep -q "version = \"$VERSION\"" Sources/MatcaEdge/EdgeConfiguration.swift || { echo "the code is not at $VERSION" >&2; exit 1; }
+      - name: Xcode 26.5, the one Matca's own builds use
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
+      - name: Build the framework
+        id: build
+        run: echo "checksum=$(scripts/build-xcframework.sh dist | tail -n 1)" >> "$GITHUB_OUTPUT"
+      - name: Sign where it came from
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/MatcaEdge.xcframework.zip
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKSUM: ${{ steps.build.outputs.checksum }}
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/MatcaEdge.xcframework.zip"
+          scripts/release-manifest.sh "$VERSION" "$CHECKSUM" "$url" > Package.swift
+          git -c user.name=Matca -c user.email=noreply@matca.ai commit --quiet -m "The prebuilt framework of $VERSION" Package.swift
+          git push origin HEAD:refs/heads/main
+          gh release create "$VERSION" dist/MatcaEdge.xcframework.zip --draft --target "$(git rev-parse HEAD)" --title "$VERSION" \
+            --notes "MatcaEdge $VERSION. Check where the framework came from: gh attestation verify MatcaEdge.xcframework.zip --repo $GITHUB_REPOSITORY"
+          gh release edit "$VERSION" --draft=false

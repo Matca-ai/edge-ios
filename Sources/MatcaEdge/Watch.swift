@@ -10,6 +10,12 @@ public enum WatchState: Equatable, Sendable {
 public struct Watch {
     public var frameInterval: TimeInterval = 0.25
     public var waitForStablePicture = false
+    /// The steady frames in a row that settle the picture.
+    public var stablePictureFrames = 12
+    /// The mean luma (0 to 255) a steady frame needs; 0 counts a dark picture as steady too.
+    public var stablePictureMinimumBrightness = 130.0
+    /// How long the wait lasts at most before the picture is taken as it is, in seconds.
+    public var stablePictureTimeout: TimeInterval = 4
     public var detectBlackScreen = false
     public var ignoreFirstAnswers = 4
     public var confidenceGate = 0.95
@@ -36,6 +42,9 @@ public struct Watch {
         AsyncStream { continuation in
             let task = Task {
                 var progress = WatchProgress()
+                progress.stability.framesNeeded = max(1, stablePictureFrames)
+                progress.stability.minimumBrightness = stablePictureMinimumBrightness
+                progress.stability.timeout = max(0, stablePictureTimeout)
                 for await frame in frames {
                     guard !Task.isCancelled, await observe(frame, progress: &progress, into: continuation) else { break }
                 }
