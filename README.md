@@ -21,10 +21,10 @@ iOS 15 or macOS 12, Swift 5.9, Xcode 15 or newer. No third-party dependencies.
 ## Install
 
 In Xcode: **File › Add Package Dependencies…**, enter `https://github.com/matca-ai/edge-ios` and pick version
-`0.2.0`. Or in `Package.swift`:
+`0.2.1`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/matca-ai/edge-ios.git", from: "0.2.0")
+.package(url: "https://github.com/matca-ai/edge-ios.git", from: "0.2.1")
 // and in your target's dependencies:
 .product(name: "MatcaEdge", package: "edge-ios")
 ```

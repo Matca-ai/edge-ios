@@ -84,6 +84,16 @@ final class WatchTests: XCTestCase {
         XCTAssertEqual(answers.classified, 20 - 12)
     }
 
+    func testTheWaitForASteadyPictureSeesEveryFrameNotOnlyThePacedOnes() async throws {
+        // A camera at 15 frames a second: the picture settles on its 13th frame (0.8 s), which is answered at once;
+        // the next answer would be due 0.25 s later, after the last frame here.
+        let answers = Answers(Array(repeating: ("A", 0.99), count: 15))
+        var watch = watch(answers)
+        watch.waitForStablePicture = true
+        _ = await collect(watch.states(of: greyFrames(200, count: 15, every: 1.0 / 15)))
+        XCTAssertEqual(answers.classified, 1)
+    }
+
     func testADarkPictureNeverStabilisesUntilTheTimeout() async throws {
         let answers = Answers(Array(repeating: ("A", 0.99), count: 20))
         var watch = watch(answers)

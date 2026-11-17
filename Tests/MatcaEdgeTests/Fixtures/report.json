@@ -1,4 +1,4 @@
-{"format":1,"day":"2026-11-03","platform":"android","os":"13","library":"0.2.0",
+{"format":1,"day":"2026-11-03","platform":"android","os":"13","library":"0.2.1",
  "outcomes":{"answered":412,"below_gate":51,"failed":1,"no_stable_picture":18,"black_screen":4},
  "confidence":[1,2,3,4,5,8,12,16,38,49,71,254],"labels":{"With Cap":251,"Without Cap":212},
  "speed_ms":{"preprocessing":[60,201,140,52,9,1,0,0,0,0,0,0],"model":[0,12,88,201,120,30,9,3,0,0,0,0]},

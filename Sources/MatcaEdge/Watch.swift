@@ -46,23 +46,29 @@ public struct Watch {
     }
 
     /// One frame through the steps; false once the watch is over.
+    /// The wait for a steady picture sees every frame, so twelve steady frames take as long as the camera needs to
+    /// deliver them; the interval paces the classifications and the black-screen check only.
     private func observe(_ frame: Frame, progress: inout WatchProgress, into continuation: AsyncStream<WatchState>.Continuation) async -> Bool {
-        guard progress.lastClassifiedTime.map({ frame.time - $0 >= frameInterval }) ?? true else { return true }
-        progress.lastClassifiedTime = frame.time
+        let due = progress.lastPacedTime.map { frame.time - $0 >= frameInterval } ?? true
+        let waiting = waitForStablePicture && !progress.stable
+        guard due || waiting else { return true }
+        if due { progress.lastPacedTime = frame.time }
         guard let decoded = answered(progress: &progress, { try PictureDecoding.decode(frame) }) else { return true }
-        if waitForStablePicture || detectBlackScreen {
+        if (due && detectBlackScreen) || waiting {
             let thumbnail = FrameThumbnail(of: decoded.picture)
-            if detectBlackScreen, progress.blackScreen.isBlack(after: thumbnail, at: frame.time) {
+            if due, detectBlackScreen, progress.blackScreen.isBlack(after: thumbnail, at: frame.time) {
                 await countEvent(.blackScreen)
                 continuation.yield(.blackScreen)
                 return false
             }
-            if waitForStablePicture, !progress.stable {
+            if waiting {
                 progress.stable = progress.stability.isStable(after: thumbnail, at: frame.time)
                 guard progress.stable else { return true }
                 if progress.stability.timedOut {
                     await countEvent(.noStablePicture)
                 }
+                // The frame that settled the picture is answered at once, and the interval runs from it.
+                progress.lastPacedTime = frame.time
             }
         }
         let answer: Answer
@@ -117,7 +123,7 @@ public struct Watch {
 }
 
 private struct WatchProgress {
-    var lastClassifiedTime: TimeInterval?
+    var lastPacedTime: TimeInterval?
     var stability = FrameStabilityDetector()
     var blackScreen = BlackScreenDetector()
     var stable = false

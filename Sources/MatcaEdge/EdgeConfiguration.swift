@@ -1,7 +1,7 @@
 import Foundation
 
 enum EdgeLibrary {
-    static let version = "0.2.0"
+    static let version = "0.2.1"
     static let userAgent = "matca-edge-ios/\(version)"
     /// The picture steps this version applies; a manifest that requires another is refused.
     static let features = [
