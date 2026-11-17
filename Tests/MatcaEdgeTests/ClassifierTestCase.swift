@@ -45,14 +45,15 @@ class ClassifierTestCase: XCTestCase {
 
     func makeClassifier(
         model: String? = nil, expectedLabels: [String] = [], bundledRelease: URL? = nil, wifiOnly: Bool = false, checkInterval: TimeInterval = 6 * 60 * 60,
-        monitoring: Bool = true, storeDirectory: URL? = nil
+        monitoring: Bool = true, storeDirectory: URL? = nil, retryDelays: [TimeInterval] = asksWithoutModel
     ) throws -> Classifier {
         let configuration = configuration(
             expectedLabels: expectedLabels, bundledRelease: bundledRelease, wifiOnly: wifiOnly, checkInterval: checkInterval, monitoring: monitoring
         )
         return try Classifier(
             model: model ?? self.model, configuration: configuration, session: FakeEdge.session(), loader: loader,
-            storeDirectory: storeDirectory ?? self.storeDirectory, crashReports: crashReports, clock: clock.monitoringClock
+            storeDirectory: storeDirectory ?? self.storeDirectory, crashReports: crashReports, clock: clock.monitoringClock,
+            retryDelays: retryDelays
         )
     }
 

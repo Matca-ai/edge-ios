@@ -9,6 +9,8 @@ and new releases you make in the Matca console reach the app by themselves, with
   confidence out.
 - **Keeps the model up to date**: it checks for a new release at start and every 6 hours, verifies its signature
   and takes it over on the next picture. A failed update never stops the model the phone already has.
+- **Gets the model on the first launch**: until the first release is on the phone it asks again within seconds, and
+  `waitUntilReady()` tells your app when the model is there.
 - **Watches a camera feed**: turns a stream of frames into steady labels, and can wait for a stable picture,
   notice a black screen and only report confident answers that several frames agree on.
 - **Works offline from the first launch**, when you ship a release inside the app.
@@ -21,10 +23,10 @@ iOS 15 or macOS 12, Swift 5.9, Xcode 15 or newer. No third-party dependencies.
 ## Install
 
 In Xcode: **File › Add Package Dependencies…**, enter `https://github.com/matca-ai/edge-ios` and pick version
-`0.2.1`. Or in `Package.swift`:
+`1.0.1`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/matca-ai/edge-ios.git", from: "0.2.1")
+.package(url: "https://github.com/matca-ai/edge-ios.git", from: "1.0.1")
 // and in your target's dependencies:
 .product(name: "MatcaEdge", package: "edge-ios")
 ```
@@ -53,6 +55,19 @@ print(answer.label, answer.confidence)                  // "With Cap" 0.98
 ```
 
 `classify` throws `EdgeError.noModel` until the first release has reached the phone.
+
+### Wait for the model on the first launch
+
+Right after install the model may still be downloading. Show that it is being prepared, then start:
+
+```swift
+showPreparing()                                   // e.g. "Preparing the model…"
+do {
+    try await classifier.waitUntilReady()         // returns at once once the model is on the phone
+} catch {
+    showError(error)                              // after 60 s: why no model came (no network, nothing released, …)
+}
+```
 
 ### Watch a camera feed
 

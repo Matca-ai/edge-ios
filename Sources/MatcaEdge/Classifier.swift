@@ -4,6 +4,9 @@ import Foundation
 import os
 
 private let longestCheckInterval: TimeInterval = 1_000_000_000
+/// While no release is on the phone, the automatic asks come this long after one another, the last repeating: a first
+/// launch without network, or before the first release, takes the model minutes after it can, not a check interval.
+let asksWithoutModel: [TimeInterval] = [5, 15, 30, 60, 300]
 
 /// One device model on this phone: the newest verified release, kept up to date (the contract's section 1).
 public actor Classifier {
@@ -23,6 +26,10 @@ public actor Classifier {
     private var runningCheck: Task<Void, Error>?
     private var sendingReports: Task<Void, Never>?
     private var overridesLogged: Set<String> = []
+    private let retryDelays: [TimeInterval]
+    private var retriesWithoutModel = 0
+    private var lastCheckFailure: Error?
+    private var readyWaiters: [UUID: CheckedContinuation<Int, Error>] = [:]
 
     public init(model: String, configuration: EdgeConfiguration) throws {
         try self.init(
@@ -34,10 +41,11 @@ public actor Classifier {
 
     init(
         model: String, configuration: EdgeConfiguration, session: URLSession, loader: any ModelLoader, storeDirectory: URL,
-        crashReports: any CrashReportSource, clock: MonitoringClock
+        crashReports: any CrashReportSource, clock: MonitoringClock, retryDelays: [TimeInterval] = asksWithoutModel
     ) throws {
         guard Self.isValidModelName(model) else { throw EdgeError.invalidModelName }
         self.model = model
+        self.retryDelays = retryDelays.isEmpty ? asksWithoutModel : retryDelays
         self.configuration = configuration
         store = try ModelStore(directory: storeDirectory)
         delivery = EdgeDelivery(model: model, configuration: configuration, session: session)
@@ -132,6 +140,16 @@ public actor Classifier {
     public func checkForUpdates() async throws {
         await loadLocalReleases()
         monitoring?.write()
+        do {
+            try await runCheck()
+            lastCheckFailure = nil
+        } catch {
+            lastCheckFailure = error
+            throw error
+        }
+    }
+
+    private func runCheck() async throws {
         if let running = runningCheck {
             return try await running.value
         }
@@ -139,6 +157,35 @@ public actor Classifier {
         runningCheck = check
         defer { runningCheck = nil }
         try await check.value
+    }
+
+    /// The release on the phone, once there is one: at once when it is there, else as soon as an ask of the edge
+    /// brings one (this call asks at once, and the automatic asks come quickly while there is none). Past the timeout
+    /// it throws why none came, the last check's failure or `EdgeError.noModel`; the asks go on after it.
+    @discardableResult
+    public func waitUntilReady(timeout: TimeInterval = 60) async throws -> Int {
+        if let release = await loadedRelease() { return release }
+        try? await checkForUpdates()
+        if let release = current?.release { return release }
+        let waiter = UUID()
+        return try await withCheckedThrowingContinuation { continuation in
+            Task { await self.wait(waiter, continuation, timeout: timeout) }
+        }
+    }
+
+    private func wait(_ waiter: UUID, _ continuation: CheckedContinuation<Int, Error>, timeout: TimeInterval) {
+        if let release = current?.release {
+            return continuation.resume(returning: release)
+        }
+        readyWaiters[waiter] = continuation
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            await self?.giveUp(waiter)
+        }
+    }
+
+    private func giveUp(_ waiter: UUID) {
+        readyWaiters.removeValue(forKey: waiter)?.resume(throwing: lastCheckFailure ?? EdgeError.noModel)
     }
 
     /// The release on disk and the bundled one, once, before the first classification or check.
@@ -180,16 +227,24 @@ public actor Classifier {
         await automaticCheck()
     }
 
-    /// Step 1's cadence: once now, then once every `checkInterval` for as long as the classifier lives.
+    /// Step 1's cadence: once now, then once every `checkInterval` for as long as the classifier lives; quickly,
+    /// by `retryDelays`, while no release is on the phone.
     private func automaticCheck() async {
         do {
             try await checkForUpdates()
         } catch {
             log.warning("no new release taken: \(describe(error), privacy: .public)")
         }
-        let interval = configuration.checkInterval
+        let nanoseconds: UInt64
+        if current == nil {
+            let delay = retryDelays[min(retriesWithoutModel, retryDelays.count - 1)]
+            retriesWithoutModel += 1
+            nanoseconds = UInt64(max(0, delay) * 1_000_000_000)
+        } else {
+            nanoseconds = Self.nanosecondsToSleep(configuration.checkInterval)
+        }
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.nanosecondsToSleep(interval))
+            try? await Task.sleep(nanoseconds: nanoseconds)
             await self?.automaticCheck()
         }
     }
@@ -254,6 +309,11 @@ public actor Classifier {
     private func use(_ loaded: LoadedRelease) {
         current = loaded
         monitoring?.startSession(release: loaded.release)
+        let waiters = readyWaiters.values
+        readyWaiters = [:]
+        for waiter in waiters {
+            waiter.resume(returning: loaded.release)
+        }
     }
 
     private func logOverrides(_ overridden: [String]) {
