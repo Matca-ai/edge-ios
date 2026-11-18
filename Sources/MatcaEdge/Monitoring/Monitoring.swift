@@ -1,6 +1,6 @@
 import Foundation
 
-/// The wall clock gives the UTC day; the monotonic one times answers and paces the writes.
+/// The wall clock gives the UTC day; the monotonic one times answers and paces the writes and the sendings.
 struct MonitoringClock: Sendable {
     var now: @Sendable () -> Date = { Date() }
     var uptimeNanoseconds: @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
@@ -15,6 +15,8 @@ enum WatchEvent: Sendable {
 /// contract's section 11). Counting only adds in memory; the file is written on its own queue.
 struct Monitoring {
     private static let writeIntervalNanoseconds: UInt64 = 60 * 1_000_000_000
+    private static let firstSendingAfterNanoseconds: UInt64 = 60 * 1_000_000_000
+    private static let sendingIntervalNanoseconds: UInt64 = 15 * 60 * 1_000_000_000
 
     private(set) var counts: MonitoringCounts
     private let file: MonitoringFile
@@ -22,6 +24,8 @@ struct Monitoring {
     private let startedAt: Date
     private let previousSession: Session?
     private var lastWrittenAt: UInt64
+    private let firstSendingDueAt: UInt64
+    private var nextSendingDueAt: UInt64
     private var sessionsCounted: Set<Int> = []
     private var lastCrashPeriodCounted: Date?
 
@@ -33,6 +37,8 @@ struct Monitoring {
         previousSession = file.loadSession()
         startedAt = clock.now()
         lastWrittenAt = clock.uptimeNanoseconds()
+        firstSendingDueAt = lastWrittenAt + Self.firstSendingAfterNanoseconds
+        nextSendingDueAt = firstSendingDueAt
         file.writeSession(Session(release: nil, startedAt: startedAt))
     }
 
@@ -87,14 +93,39 @@ struct Monitoring {
         file.writeCounts(counts)
     }
 
-    /// Drops the days past keeping and names the finished ones to send now, oldest first.
+    /// All a classification adds to learn whether it starts a sending: one comparison of the clock.
+    var isSendingDue: Bool {
+        clock.uptimeNanoseconds() >= nextSendingDueAt
+    }
+
+    /// The next sending a classification starts comes an interval after this one. A sending in the classifier's
+    /// first minute, the one after the check at creation, leaves the one due at the minute's end standing: that
+    /// one carries the first answers.
+    mutating func sendingStarted() {
+        let now = clock.uptimeNanoseconds()
+        if now >= firstSendingDueAt {
+            nextSendingDueAt = now + Self.sendingIntervalNanoseconds
+        }
+    }
+
+    /// Drops the days past keeping and names every release and day to send now, oldest first.
     mutating func reportsDue() -> [ReleaseDay] {
         counts.reportsDue(today: today)
     }
 
-    /// The day's counts leave the memory while their report is on its way, so nothing counted meanwhile is sent twice.
+    /// The counts leave the memory while their report is on its way, so what is counted meanwhile goes with the
+    /// next report and nothing is sent twice.
     mutating func takeOut(_ key: ReleaseDay) -> DayCounts? {
         counts.days.removeValue(forKey: key)
+    }
+
+    func hasReported(_ key: ReleaseDay) -> Bool {
+        counts.sent.contains(key)
+    }
+
+    /// Only once the edge took a report: one it kept or refused leaves the next one the first of its release and day.
+    mutating func rememberReported(_ key: ReleaseDay) {
+        counts.sent.insert(key)
     }
 
     mutating func putBack(_ kept: DayCounts, at key: ReleaseDay) {

@@ -76,6 +76,8 @@ class ClassifierTestCase: XCTestCase {
         FakeEdge.route("GET", "\(releasePath)/files/reference/\(sha256Hex(referencePicture))", body: referencePicture)
         FakeEdge.route("POST", "\(releasePath)/installs", status: 204)
         FakeEdge.route("POST", "\(releasePath)/failed-checks", status: 204)
+        // The counts stay with the phone, for a test to read, unless the test lets the edge take the reports.
+        FakeEdge.route("POST", "\(releasePath)/report", status: FakeEdge.noConnection)
     }
 
     func state() -> StoredState {
@@ -121,9 +123,10 @@ class ClassifierTestCase: XCTestCase {
         MonitoringFile(directory: storeDirectory).loadCounts()
     }
 
-    /// The classifier's counts as a check writes them first.
+    /// The classifier's counts as the sending after a check writes them, the ones its reports took out put back.
     func counts(keptBy classifier: Classifier) async -> MonitoringCounts {
         try? await classifier.checkForUpdates()
+        await classifier.waitForReportsOnTheirWay()
         return keptCounts()
     }
 

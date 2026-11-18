@@ -189,6 +189,8 @@ final class ClassifierTests: ClassifierTestCase {
         FakeEdge.route("GET", "/v1/models/cap-detection/manifest", status: 404)
         let stateFile = storeDirectory.appendingPathComponent(ModelStore.stateFileName)
         let asked = expectation(description: "the edge was asked")
+        // The report of the bundled release's first counts asks the edge as well.
+        asked.assertForOverFulfill = false
         FakeEdge.observeRequests {
             let state = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(StoredState.self, from: $0) }
             XCTAssertEqual(state?.currentRelease, 1, "the bundled release comes before any network")

@@ -2,10 +2,10 @@ import Foundation
 @testable import MatcaEdge
 import XCTest
 
-/// Section 10, test 7: which finished days go after a check, what the edge's answer does to each, and that
-/// neither a classification nor a check waits for them.
+/// Section 10, test 7: which days go and when, what the edge's answer does to each report, which one says
+/// `first`, and that neither a classification nor a check waits for them.
 final class ReportSendingTests: ClassifierTestCase {
-    func testFinishedDaysGoOldestFirstAfterACheckTheEdgeAnsweredAndTodayWaitsForTomorrow() async throws {
+    func testEveryDayHeldTodayTooGoesOldestFirstAfterACheckTheEdgeAnswered() async throws {
         let today = clock.today
         try seed([
             ReleaseDay(release: 1, day: today - 1), ReleaseDay(release: 2, day: today - 2), ReleaseDay(release: 1, day: today),
@@ -18,27 +18,107 @@ final class ReportSendingTests: ClassifierTestCase {
 
         FakeEdge.route("GET", "/v1/models/\(model)/manifest", status: 404)
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
-        try await waitUntil { Set(self.keptCounts().days.keys) == [ReleaseDay(release: 1, day: today)] }
-        XCTAssertEqual(sentReports(), [
-            SentReport(release: 1, day: UTCDay.text(today - 7)), SentReport(release: 2, day: UTCDay.text(today - 2)),
-            SentReport(release: 1, day: UTCDay.text(today - 1)),
-        ])
+        await classifier.waitForReportsOnTheirWay()
+        let sent = [
+            ReleaseDay(release: 1, day: today - 7), ReleaseDay(release: 2, day: today - 2), ReleaseDay(release: 1, day: today - 1),
+            ReleaseDay(release: 1, day: today),
+        ]
+        XCTAssertEqual(sentReports(), sent.map { SentReport(release: $0.release, day: UTCDay.text($0.day), first: true, answers: 1) })
+        XCTAssertEqual(keptCounts().days, [:])
+        XCTAssertEqual(keptCounts().sent, Set(sent))
         let request = try XCTUnwrap(FakeEdge.requests(endingWith: "/report").first)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mdk_1_secret")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "matca-edge-ios/1.1.0")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "matca-edge-ios/1.2.0")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
         XCTAssertEqual(body["platform"] as? String, "ios")
-        XCTAssertEqual((body["outcomes"] as? [String: Int])?["answered"], 1)
+        XCTAssertEqual(body["format"] as? Int, 2)
 
-        clock.advance(seconds: 24 * 60 * 60)
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
-        try await waitUntil { self.keptCounts().days.isEmpty }
-        XCTAssertEqual(sentReports().last, SentReport(release: 1, day: UTCDay.text(today)))
-        XCTAssertEqual(sentReports().count, 4)
+        await classifier.waitForReportsOnTheirWay()
+        XCTAssertEqual(sentReports().count, 4, "a day with nothing counted since its last report is not sent")
     }
 
-    func testA429KeepsTheReportAndEndsTheSendingUntilTheNextCheck() async throws {
+    func testFirstIsSaidOncePerReleaseAndDayAlsoAfterARestart() async throws {
+        serve(manifest(release: 1, sequence: 1))
+        routeReports(of: [1], status: 204)
+        let classifier = try await settledClassifier()
+        for _ in 0..<2 {
+            _ = try await classifier.classify(referencePicture)
+            try await classifier.checkForUpdates()
+            await classifier.waitForReportsOnTheirWay()
+        }
+        let beforeTheRestart = sentReports()
+        XCTAssertGreaterThanOrEqual(beforeTheRestart.count, 2)
+        XCTAssertEqual(beforeTheRestart.map(\.first), [true] + Array(repeating: false, count: beforeTheRestart.count - 1))
+
+        let restarted = try await settledClassifier()
+        _ = try await restarted.classify(referencePicture)
+        try await restarted.checkForUpdates()
+        await restarted.waitForReportsOnTheirWay()
+        let ofTheDay = sentReports()
+        XCTAssertGreaterThan(ofTheDay.count, beforeTheRestart.count)
+        XCTAssertEqual(ofTheDay.filter(\.first).count, 1)
+        XCTAssertEqual(ofTheDay.map(\.answers).reduce(0, +), 3, "every answer goes once")
+
+        clock.advance(seconds: 24 * 60 * 60)
+        _ = try await restarted.classify(referencePicture)
+        await restarted.waitForReportsOnTheirWay()
+        XCTAssertEqual(sentReports().last, SentReport(release: 1, day: UTCDay.text(clock.today), first: true, answers: 1))
+    }
+
+    func testWhatIsCountedWhileAReportIsOnItsWayGoesWithTheNextOne() async throws {
+        serve(manifest(release: 1, sequence: 1))
+        routeReports(of: [1], status: 204)
+        let classifier = try await settledClassifier()
+        await classifier.waitForReportsOnTheirWay()
+        let reportsAtCreation = sentReports().count
+        let edgeAnswers = DispatchSemaphore(value: 0)
+        FakeEdge.observeRequests { edgeAnswers.wait() }
+        defer { edgeAnswers.signal() }
+
+        try await classify(2, by: classifier)
+        clock.advance(seconds: 60)
+        try await classify(1, by: classifier)
+        try await waitUntil { self.sentReports().count == reportsAtCreation + 1 }
+        try await classify(2, by: classifier)
+        FakeEdge.observeRequests {}
+        edgeAnswers.signal()
+        await classifier.waitForReportsOnTheirWay()
+        clock.advance(seconds: 15 * 60)
+        try await classify(1, by: classifier)
+        await classifier.waitForReportsOnTheirWay()
+
+        XCTAssertEqual(sentReports().dropFirst(reportsAtCreation).map(\.answers), [3, 3])
+        XCTAssertEqual(keptCounts().days, [:])
+    }
+
+    func testAClassificationStartsASendingAMinuteAfterCreationAndThenFifteenMinutesAfterTheLastSending() async throws {
+        serve(manifest(release: 1, sequence: 1))
+        routeReports(of: [1], status: 204)
+        let classifier = try await settledClassifier()
+        await classifier.waitForReportsOnTheirWay()
+        let atCreation = sentReports().count
+
+        clock.advance(seconds: 59)
+        try await assertReports(atCreation, afterAClassificationBy: classifier)
+        clock.advance(seconds: 1)
+        try await assertReports(atCreation + 1, afterAClassificationBy: classifier)
+        clock.advance(seconds: 15 * 60 - 1)
+        try await assertReports(atCreation + 1, afterAClassificationBy: classifier)
+        clock.advance(seconds: 1)
+        try await assertReports(atCreation + 2, afterAClassificationBy: classifier)
+
+        clock.advance(seconds: 14 * 60)
+        try await assertReports(atCreation + 2, afterAClassificationBy: classifier)
+        try await classifier.checkForUpdates()
+        clock.advance(seconds: 60)
+        try await assertReports(atCreation + 3, afterAClassificationBy: classifier, "the check's sending is the last one")
+        clock.advance(seconds: 14 * 60)
+        try await assertReports(atCreation + 4, afterAClassificationBy: classifier)
+    }
+
+    func testA429KeepsTheReportAsTheFirstAndEndsTheSendingUntilTheNextOne() async throws {
         try seed([ReleaseDay(release: 1, day: clock.today - 2), ReleaseDay(release: 2, day: clock.today - 1)])
         routeReports(of: [1], status: 429)
         routeReports(of: [2], status: 204)
@@ -50,6 +130,7 @@ final class ReportSendingTests: ClassifierTestCase {
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
         try await waitUntil { self.keptCounts().days.isEmpty }
         XCTAssertEqual(sentReports().map(\.release), [1, 1, 2])
+        XCTAssertEqual(sentReports().map(\.first), [true, true, true])
     }
 
     func testARefusalDropsTheReportAndAServerErrorOrNoConnectionKeepsIt() async throws {
@@ -69,9 +150,10 @@ final class ReportSendingTests: ClassifierTestCase {
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
         try await waitUntil { self.keptCounts().days.isEmpty }
         XCTAssertEqual(sentReports().map(\.release), [1, 2, 3, 4, 5, 5, 5])
+        XCTAssertEqual(keptCounts().sent, [ReleaseDay(release: 5, day: clock.today - 1)], "only a report the edge took is remembered")
     }
 
-    func testAtMostFourteenReportsGoPerCheck() async throws {
+    func testAtMostFourteenReportsGoPerSending() async throws {
         let days = (1...7).flatMap { daysAgo in (1...3).map { ReleaseDay(release: $0, day: clock.today - daysAgo) } }
         try seed(days)
         routeReports(of: [1, 2, 3], status: 204)
@@ -80,7 +162,7 @@ final class ReportSendingTests: ClassifierTestCase {
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
         try await waitUntil { self.keptCounts().days.count == 7 }
         XCTAssertEqual(sentReports().count, 14)
-        XCTAssertEqual(sentReports().last, SentReport(release: 2, day: UTCDay.text(clock.today - 3)))
+        XCTAssertEqual(sentReports().last, SentReport(release: 2, day: UTCDay.text(clock.today - 3), first: true, answers: 1))
         await assertThrows(try await classifier.checkForUpdates(), .edge(status: 404))
         try await waitUntil { self.keptCounts().days.isEmpty }
         XCTAssertEqual(sentReports().count, 21)
@@ -107,6 +189,8 @@ final class ReportSendingTests: ClassifierTestCase {
     private struct SentReport: Equatable {
         let release: Int
         let day: String
+        let first: Bool
+        let answers: Int
     }
 
     /// No report goes at creation: the edge does not answer its first manifest asks; it answers 404 from then on.
@@ -127,8 +211,26 @@ final class ReportSendingTests: ClassifierTestCase {
         FakeEdge.requests(endingWith: "/report").map { request in
             let release = Int(request.url!.deletingLastPathComponent().lastPathComponent)!
             let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            return SentReport(release: release, day: body?["day"] as? String ?? "")
+            let outcomes = body?["outcomes"] as? [String: Int] ?? [:]
+            return SentReport(
+                release: release, day: body?["day"] as? String ?? "", first: body?["first"] as? Bool ?? false,
+                answers: (outcomes["answered"] ?? 0) + (outcomes["below_gate"] ?? 0)
+            )
         }
+    }
+
+    private func classify(_ times: Int, by classifier: Classifier) async throws {
+        for _ in 0..<times {
+            _ = try await classifier.classify(referencePicture)
+        }
+    }
+
+    private func assertReports(
+        _ expected: Int, afterAClassificationBy classifier: Classifier, _ message: String = "", file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        try await classify(1, by: classifier)
+        await classifier.waitForReportsOnTheirWay()
+        XCTAssertEqual(sentReports().count, expected, message, file: file, line: line)
     }
 
     private func secondsToClassify(_ times: Int, by classifier: Classifier) async throws -> Double {

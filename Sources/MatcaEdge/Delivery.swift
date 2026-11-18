@@ -10,7 +10,7 @@ protocol Delivery: Sendable {
     func manifest() async throws -> SignedManifest
     func file(release: Int, platform: String, path: String, expectedSize: Int) async throws -> Data
     func count(_ event: DeliveryCount, release: Int) async throws
-    /// A finished day's counts for that release, as JSON (the contract's section 11).
+    /// A day's counts for that release since the report before, as JSON (the contract's section 11).
     func report(_ body: Data, release: Int) async throws
 }
 

@@ -14,7 +14,7 @@ and new releases you make in the Matca console reach the app by themselves, with
 - **Watches a camera feed**: turns a stream of frames into steady labels, and can wait for a stable picture,
   notice a black screen and only report confident answers that several frames agree on.
 - **Works offline from the first launch**, when you ship a release inside the app.
-- **Reports how each release does** on phones, once a day, as counts only, never a picture. You can switch this off.
+- **Reports how each release does** on phones, within minutes while it answers, as counts only, never a picture. You can switch this off.
 
 ## Requirements
 
@@ -33,10 +33,10 @@ compiled in your app.
 ## Install
 
 In Xcode: **File › Add Package Dependencies…**, enter `https://github.com/matca-ai/edge-ios` and pick version
-`1.1.0`. Or in `Package.swift`:
+`1.2.0`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/matca-ai/edge-ios.git", from: "1.1.0")
+.package(url: "https://github.com/matca-ai/edge-ios.git", from: "1.2.0")
 // and in your target's dependencies:
 .product(name: "MatcaEdge", package: "edge-ios")
 ```
@@ -115,7 +115,7 @@ for await state in watch.states(of: frames) {   // frames: AsyncStream<Frame>, e
 | `bundledRelease` | `nil` | A release shipped in the app, used before any network |
 | `wifiOnly` | `false` | Downloads releases on Wi-Fi only |
 | `checkInterval` | 6 hours | How often it checks for a new release |
-| `monitoring` | `true` | Sends each release's daily counts; `false` sends nothing |
+| `monitoring` | `true` | Sends each release's counts per day; `false` sends nothing |
 
 `try await classifier.checkForUpdates()` checks right away and throws an `EdgeError` that says why a release was not
 taken. The current release is `await classifier.currentRelease`.
@@ -123,8 +123,9 @@ taken. The current release is `await classifier.currentRelease`.
 ## Privacy
 
 - Pictures never leave the phone.
-- The library sends only the release check, the downloads and, unless `monitoring` is `false`, one report a day of
-  counts per release: answers, confidence, speed and crashes. No device id, no user data, no location.
+- The library sends only the release check, the downloads and, unless `monitoring` is `false`, reports of
+  counts per release and day, at most every 15 minutes while it answers: answers, confidence, speed and crashes.
+  No device id, no user data, no location.
 - The package ships `PrivacyInfo.xcprivacy`: no tracking; with monitoring on it declares crash, performance and other
   diagnostic data, not linked to the user.
 - With monitoring on, your app needs its own legal basis for sending the reports (ePrivacy Directive, Article 5(3)).

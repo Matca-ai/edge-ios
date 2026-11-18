@@ -1,7 +1,7 @@
 import Foundation
 
 enum EdgeLibrary {
-    static let version = "1.1.0"
+    static let version = "1.2.0"
     static let userAgent = "matca-edge-ios/\(version)"
     /// The picture steps this version applies; a manifest that requires another is refused.
     static let features = [
@@ -21,7 +21,7 @@ public struct EdgeConfiguration: Sendable {
     public var bundledRelease: URL?
     public var wifiOnly: Bool
     public var checkInterval: TimeInterval
-    /// Counts how each release does on this phone and sends each finished day's counts to the edge (the
+    /// Counts how each release does on this phone and sends each day's counts to the edge as they grow (the
     /// contract's section 11); false counts and sends nothing and deletes what was kept. Leaving it on needs
     /// the app's own legal basis.
     public var monitoring: Bool

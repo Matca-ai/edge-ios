@@ -15,16 +15,17 @@ enum UTCDay {
     }
 }
 
-struct ReleaseDay: Hashable, Sendable {
+struct ReleaseDay: Hashable, Codable, Sendable {
     let release: Int
     let day: Int
 }
 
-/// Every release and day this phone holds counts for, kept in `monitoring.json` until sent.
+/// Every release and day this phone holds counts for since its last report, and the ones it already reported,
+/// kept in `monitoring.json`.
 struct MonitoringCounts: Codable, Equatable, Sendable {
-    /// An unsent day is kept this many days, then dropped.
+    /// A day is kept this many days, then dropped, sent or not.
     static let daysKept = 7
-    static let reportsPerCheck = 14
+    static let reportsPerSending = 14
 
     private struct KeptDay: Codable {
         let release: Int
@@ -33,41 +34,49 @@ struct MonitoringCounts: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case days
+        case days, sent
     }
 
     var days: [ReleaseDay: DayCounts] = [:]
+    /// The releases and days the edge took a report of, so only the first report of each says `first`.
+    var sent: Set<ReleaseDay> = []
 
     init() {}
 
     init(from decoder: Decoder) throws {
-        let kept = try decoder.container(keyedBy: CodingKeys.self).decode([KeptDay].self, forKey: .days)
-        for day in kept {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        for day in try container.decode([KeptDay].self, forKey: .days) {
             days[ReleaseDay(release: day.release, day: day.day), default: DayCounts()].add(day.counts)
         }
+        // A file written by a library before 1.2.0 has no such list.
+        sent = Set(try container.decodeIfPresent([ReleaseDay].self, forKey: .sent) ?? [])
     }
 
     func encode(to encoder: Encoder) throws {
         let kept = days.map { KeptDay(release: $0.key.release, day: $0.key.day, counts: $0.value) }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(kept, forKey: .days)
+        try container.encode(Array(sent), forKey: .sent)
     }
 
     var isWellFormed: Bool {
         days.values.allSatisfy(\.isWellFormed)
     }
 
-    /// Drops the days past keeping and names the finished ones to send now, oldest first; today is never sent.
+    /// Drops the days past keeping and names every release and day to send now, the running day too, oldest first.
     mutating func reportsDue(today: Int) -> [ReleaseDay] {
         days = days.filter { today - $0.key.day <= Self.daysKept }
-        let finished = days.keys.filter { $0.day < today }.sorted { ($0.day, $0.release) < ($1.day, $1.release) }
-        return Array(finished.prefix(Self.reportsPerCheck))
+        sent = sent.filter { today - $0.day <= Self.daysKept }
+        let oldestFirst = days.keys.sorted { ($0.day, $0.release) < ($1.day, $1.release) }
+        return Array(oldestFirst.prefix(Self.reportsPerSending))
     }
 }
 
-/// One finished day's counts for one release, as `POST …/releases/{n}/report` takes it.
+/// One release's counts on one day since the report before, as `POST …/releases/{n}/report` takes it.
 struct DayReport: Encodable {
-    let format = 1
+    let format = 2
+    /// Whether this is the first report this phone sends for the release and day: the control plane counts a phone for each.
+    let first: Bool
     let day: String
     let platform = "ios"
     let os = String(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
@@ -80,12 +89,13 @@ struct DayReport: Encodable {
     let crashes: Int
 
     enum CodingKeys: String, CodingKey {
-        case format, day, platform, os, library, outcomes, confidence, labels, sessions, crashes
+        case format, first, day, platform, os, library, outcomes, confidence, labels, sessions, crashes
         case speedMs = "speed_ms"
     }
 
-    init(day: Int, counts: DayCounts) {
+    init(day: Int, first: Bool, counts: DayCounts) {
         self.day = UTCDay.text(day)
+        self.first = first
         outcomes = counts.outcomes
         confidence = counts.confidence
         labels = counts.labels

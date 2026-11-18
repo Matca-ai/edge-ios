@@ -46,8 +46,8 @@ final class MonitoringTests: ClassifierTestCase {
     func testASessionIsCountedOncePerClassifierAndRelease() async throws {
         serve(manifest(release: 1, sequence: 1))
         let first = try await settledClassifier()
-        try await first.checkForUpdates()
-        XCTAssertEqual(keptCounts().days[ReleaseDay(release: 1, day: clock.today)]?.sessions, 1)
+        let keptByFirst = await counts(keptBy: first)
+        XCTAssertEqual(keptByFirst.days[ReleaseDay(release: 1, day: clock.today)]?.sessions, 1)
 
         let restarted = try await settledClassifier()
         _ = try await restarted.classify(referencePicture)
@@ -83,14 +83,19 @@ final class MonitoringTests: ClassifierTestCase {
     func testTheCountsAreWrittenByTheFirstClassificationAfterAMinute() async throws {
         serve(manifest(release: 1, sequence: 1))
         let classifier = try await settledClassifier()
+        // The sending a minute after creation writes too; the minutes after it show the writes between two sendings.
+        clock.advance(seconds: 60)
         _ = try await classifier.classify(referencePicture)
+        await classifier.waitForReportsOnTheirWay()
+        let reportsOfTheSending = FakeEdge.requests(endingWith: "/report").count
         clock.advance(seconds: 59)
         _ = try await classifier.classify(referencePicture)
-        XCTAssertEqual(keptCounts().days[ReleaseDay(release: 1, day: clock.today)]?.outcomes.belowGate ?? 0, 0)
+        XCTAssertEqual(keptCounts().days[ReleaseDay(release: 1, day: clock.today)]?.outcomes.belowGate, 1)
 
         clock.advance(seconds: 1)
         _ = try await classifier.classify(referencePicture)
         XCTAssertEqual(keptCounts().days[ReleaseDay(release: 1, day: clock.today)]?.outcomes.belowGate, 3)
+        XCTAssertEqual(FakeEdge.requests(endingWith: "/report").count, reportsOfTheSending)
     }
 
     func testMonitoringOffCountsAndSendsNothingAndDeletesWhatWasKept() async throws {

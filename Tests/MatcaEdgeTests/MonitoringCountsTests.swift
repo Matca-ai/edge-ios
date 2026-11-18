@@ -19,7 +19,7 @@ final class MonitoringCountsTests: XCTestCase {
     }
 
     func testAScriptedDayGivesTheFixtureReport() throws {
-        let fixture = Fixtures.json("report.json")
+        let fixture = Fixtures.json("report-format-2.json")
         let file = MonitoringFile(directory: directory)
         for session in 0..<(fixture["sessions"] as! Int) {
             var monitoring = Monitoring(file: file, clock: clock.monitoringClock)
@@ -30,18 +30,18 @@ final class MonitoringCountsTests: XCTestCase {
             monitoring.write()
         }
 
-        clock.advance(seconds: 24 * 60 * 60)
-        var nextDay = Monitoring(file: file, clock: clock.monitoringClock)
-        let due = nextDay.reportsDue()
-        XCTAssertEqual(due, [ReleaseDay(release: 4, day: clock.today - 1)])
-        let report = try JSONSerialization.jsonObject(with: JSONEncoder().encode(DayReport(day: due[0].day, counts: try XCTUnwrap(nextDay.takeOut(due[0])))))
+        var sending = Monitoring(file: file, clock: clock.monitoringClock)
+        let due = sending.reportsDue()
+        XCTAssertEqual(due, [ReleaseDay(release: 4, day: clock.today)])
+        let firstReport = DayReport(day: due[0].day, first: !sending.hasReported(due[0]), counts: try XCTUnwrap(sending.takeOut(due[0])))
+        let report = try JSONSerialization.jsonObject(with: JSONEncoder().encode(firstReport))
         var expected = fixture
         expected["platform"] = "ios"
         expected["os"] = String(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
         XCTAssertEqual(report as? NSDictionary, expected as NSDictionary)
     }
 
-    /// The steps are the trainer's own, kept once in the shared fixtures (`sdks/edge-fixtures/steps.json`), which
+    /// The steps are the trainer's own, kept once in the shared fixtures (`sdks/test-fixtures/steps.json`), which
     /// the trainer, the control plane and the Android library are held to as well.
     func testTheStepsAreTheSharedOnes() {
         let steps = Fixtures.json("steps.json")
@@ -99,6 +99,34 @@ final class MonitoringCountsTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: asideURL), Data(unreadable.utf8))
             monitoring.countFailure(release: 1)
         }
+    }
+
+    func testAFileFromBeforeTheReportedDaysWereKeptStillLoads() throws {
+        var kept = MonitoringCounts()
+        kept.days[ReleaseDay(release: 1, day: clock.today)] = DayCounts(sessions: 2)
+        var written = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(kept)) as? [String: Any])
+        XCTAssertNotNil(written.removeValue(forKey: "sent"))
+        try JSONSerialization.data(withJSONObject: written).write(to: directory.appendingPathComponent(MonitoringFile.countsFileName))
+
+        XCTAssertEqual(MonitoringFile(directory: directory).loadCounts(), kept)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(MonitoringFile.unreadableCountsFileName).path))
+    }
+
+    func testTheReportedDaysSurviveTheFileAndDropWithTheDaysPastKeeping() throws {
+        let today = clock.today
+        var kept = MonitoringCounts()
+        for day in [today - 8, today - 7, today] {
+            kept.days[ReleaseDay(release: 1, day: day)] = DayCounts(sessions: 1)
+            kept.sent.insert(ReleaseDay(release: 2, day: day))
+        }
+        let file = MonitoringFile(directory: directory)
+        file.writeCounts(kept)
+        var loaded = file.loadCounts()
+        XCTAssertEqual(loaded, kept)
+
+        XCTAssertEqual(loaded.reportsDue(today: today), [ReleaseDay(release: 1, day: today - 7), ReleaseDay(release: 1, day: today)])
+        XCTAssertEqual(Set(loaded.days.keys), [ReleaseDay(release: 1, day: today - 7), ReleaseDay(release: 1, day: today)])
+        XCTAssertEqual(loaded.sent, [ReleaseDay(release: 2, day: today - 7), ReleaseDay(release: 2, day: today)])
     }
 
     /// The fixture's day: every answer in its confidence step, label and speed steps, then the other outcomes.

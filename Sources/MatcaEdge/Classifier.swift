@@ -90,6 +90,7 @@ public actor Classifier {
         } catch {
             if let release = await loadedRelease() {
                 monitoring?.countFailure(release: release)
+                startSendingReportsIfDue()
             }
             throw error
         }
@@ -99,6 +100,7 @@ public actor Classifier {
     func classify(decoded: DecodedPicture) async throws -> Answer {
         await loadLocalReleases()
         guard let current else { throw EdgeError.noModel }
+        defer { startSendingReportsIfDue() }
         do {
             return try answer(decoded, by: current)
         } catch {
@@ -254,18 +256,18 @@ public actor Classifier {
         UInt64((interval >= 1 ? min(interval, longestCheckInterval) : 1) * 1_000_000_000)
     }
 
-    /// The finished days go after any manifest ask the edge answered, whatever it said.
+    /// The reports go after any manifest ask the edge answered, whatever it said.
     private func takeEdgeRelease() async throws {
         let signed: SignedManifest
         do {
             signed = try await delivery.manifest()
         } catch {
             if error as? EdgeError != .edge(status: 0) {
-                startSendingFinishedDays()
+                startSendingReports()
             }
             throw error
         }
-        startSendingFinishedDays()
+        startSendingReports()
         try await take(signed, bundledAt: nil)
     }
 
@@ -326,24 +328,38 @@ public actor Classifier {
         monitoring?.countCrashes(reports)
     }
 
-    /// Runs off the check's path; a pass already under way finishes first.
-    private func startSendingFinishedDays() {
-        guard monitoring != nil else { return }
-        let previous = sendingReports
-        sendingReports = Task {
-            await previous?.value
-            await self.sendFinishedDays()
+    /// The console shows a release within minutes: the counts also go while the classifier answers, not only after a check.
+    private func startSendingReportsIfDue() {
+        if monitoring?.isSendingDue == true {
+            startSendingReports()
         }
     }
 
-    private func sendFinishedDays() async {
+    /// Runs off the path of the check or the classification that starts it; a sending already under way finishes first.
+    private func startSendingReports() {
+        guard monitoring != nil else { return }
+        monitoring?.sendingStarted()
+        let previous = sendingReports
+        sendingReports = Task {
+            await previous?.value
+            await self.sendReports()
+        }
+    }
+
+    /// The tests read what was kept and sent once no report is on its way.
+    func waitForReportsOnTheirWay() async {
+        await sendingReports?.value
+    }
+
+    private func sendReports() async {
         guard let due = monitoring?.reportsDue() else { return }
         for key in due {
-            guard let counts = monitoring?.takeOut(key),
-                  let body = try? JSONEncoder().encode(DayReport(day: key.day, counts: counts))
-            else { continue }
+            guard let counts = monitoring?.takeOut(key) else { continue }
+            let report = DayReport(day: key.day, first: monitoring?.hasReported(key) != true, counts: counts)
+            guard let body = try? JSONEncoder().encode(report) else { continue }
             do {
                 try await delivery.report(body, release: key.release)
+                monitoring?.rememberReported(key)
             } catch let error where Self.keepsReport(after: error) {
                 monitoring?.putBack(counts, at: key)
                 break
@@ -356,7 +372,7 @@ public actor Classifier {
 
     private static let refusedReportStatuses: Set<Int> = [400, 401, 404, 413]
 
-    /// A refusal is final; anything else may pass at a later check, within the days a report is kept.
+    /// A refusal is final; anything else may pass at a later sending, within the days a report is kept.
     private static func keepsReport(after error: Error) -> Bool {
         guard case EdgeError.edge(let status) = error else { return true }
         return !refusedReportStatuses.contains(status)
