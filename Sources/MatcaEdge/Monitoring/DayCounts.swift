@@ -22,7 +22,8 @@ struct DayCounts: Codable, Equatable, Sendable {
         var model = DayCounts.emptySteps
     }
 
-    /// The trainer's gate thresholds (`score.py`, `GATES`), so the field's curve lies on the test's own.
+    /// The trainer's gate thresholds, so the field's curve lies on the test's own; a test holds them and the
+    /// millisecond steps to the shared fixtures (`steps.json`).
     static let confidenceThresholds = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.92, 0.95, 0.97, 0.98, 0.99]
     static let millisecondThresholds: [Double] = [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000]
     /// The gate the trainer scores against: an answer at or above it counts as answered.

@@ -41,6 +41,15 @@ final class MonitoringCountsTests: XCTestCase {
         XCTAssertEqual(report as? NSDictionary, expected as NSDictionary)
     }
 
+    /// The steps are the trainer's own, kept once in the shared fixtures (`sdks/edge-fixtures/steps.json`), which
+    /// the trainer, the control plane and the Android library are held to as well.
+    func testTheStepsAreTheSharedOnes() {
+        let steps = Fixtures.json("steps.json")
+        XCTAssertEqual(steps["confidence_thresholds"] as? [Double], DayCounts.confidenceThresholds)
+        XCTAssertEqual(steps["millisecond_thresholds"] as? [Double], DayCounts.millisecondThresholds)
+        XCTAssertEqual(steps["confidence_gate"] as? Double, DayCounts.answeredGate)
+    }
+
     func testEachValueFallsInItsStep() {
         let confidence = DayCounts.confidenceThresholds
         XCTAssertEqual(DayCounts.step(of: 0.4999, thresholds: confidence), 0)
